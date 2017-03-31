@@ -8,6 +8,7 @@ import argparse
 from pytz import timezone
 from datetime import datetime
 from six.moves import input
+from uuid import uuid4
 
 
 def get_answer(default='Y'):
@@ -30,12 +31,54 @@ def delete_unused_files(db_name, db_host, db_username,db_password, find_unused_a
     conn.cursor()
     cursor.execute('SHOW TABLES')
     table_info = {}
+    index_table_name = 'delete_unsed_files_script_index_{0}'.format(uuid4().hex)
     for raw in cursor.fetchall():
         table_name = raw[0]
         table_info[table_name]  = []
         cursor.execute('SHOW COLUMNS FROM {0}'.format(table_name))
         for raw in cursor.fetchall():
+            column_type_is_supported = False
+            column_type = raw[1].upper()
+            for t in ['CHAR', 'VARCHAR', 'BINARY', 'VARBINARY', 'BLOB', 'TEXT', 'ENUM', 'SET']:
+                if t in column_type:
+                    column_type_is_supported = True
+                    break
+            if column_type_is_supported is False:
+                continue
             table_info[table_name].append(raw[0])
+    index_is_build = False
+
+    def build_index():
+        index_is_build = True
+        textchars = bytearray({7, 8, 9, 10, 12, 13, 27} | set(range(0x20, 0x100)) - {0x7f})
+        is_binary_string = lambda bytes: bool(bytes.translate(None, textchars))
+        cursor.execute('''
+                CREATE TABLE `{0}` (
+                  `{1}` varchar(1024) NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+                '''.format(index_table_name, 'word'))
+        conn.commit()
+        cursor.execute('''
+          ALTER TABLE `{0}` ADD UNIQUE KEY `word` (`word`(150))
+        '''.format(table_name))
+
+        for dir_path in find_usages_at_directories:
+            for root, subdirs, files in os.walk(dir_path):
+                for filename in files:
+                    file_path = os.path.join(root, filename)
+                    with open(file_path, 'rb') as f:
+                        if is_binary_string(f.read(1024)) is False:
+                            continue
+                        f.seek(0)
+                        for line in f:
+                            for word in line.split():
+                                pass
+
+
+    def is_file_used(f_name):
+        if index_is_build is False:
+            build_index()
+        return True
 
     def is_file_used_at_directories(f_name):
         for dir_path in find_usages_at_directories:
