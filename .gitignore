@@ -1,0 +1,10 @@
+/venv/
+.idea/*
+*.pyc
+*.lock
+nohup.out
+*.py[co]
+*~
+/*.tar
+/test/data
+
