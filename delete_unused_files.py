@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import os
 import MySQLdb
+from _mysql_exceptions import ProgrammingError
 import tarfile
 import argparse
 from pytz import timezone
@@ -49,8 +50,12 @@ def delete_unused_files(db_name, db_host, db_username,db_password, find_unused_a
 
     def is_file_used_at_db(f_name):
         for table_name, fields in table_info.items():
-            query = 'SELECT "none" as none FROM {0} WHERE {1}'.format(table_name, ' OR '.join(['{0} LIKE "%{1}%"'.format(field_name, f_name) for field_name in fields]))
-            cursor.execute(query)
+            query = 'SELECT "none" as none FROM {0} WHERE {1}'.format(table_name, ' OR '.join(['`{0}` LIKE "%{1}%"'.format(field_name, f_name) for field_name in fields]))
+            try:
+                cursor.execute(query)
+            except ProgrammingError as e:
+                print(query)
+                raise
             if cursor.fetchone() is not None:
                 return True
         return False
