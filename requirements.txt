@@ -2,3 +2,4 @@ six==1.10.0
 mysqlclient==1.3.9
 pytz==2016.10
 binaryornot==0.4.0
+progressbar2==3.16.1

@@ -6,5 +6,6 @@ nohup.out
 *.py[co]
 *~
 /*.tar
+/*.log
 /test/data
 
