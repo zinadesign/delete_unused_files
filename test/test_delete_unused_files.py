@@ -52,7 +52,9 @@ class Test(unittest.TestCase):
         with open(used_file_in_db, 'w') as f:
             f.write('some data')
             f.close()
-        self.cursor.execute('INSERT INTO {0} VALUES ("kdsksdkds/dkdks{1}/sdfksdkf")'.format(self.table_name, os.path.basename(used_file_in_db)))
+        self.cursor.execute('INSERT INTO `'+ self.table_name +'` VALUES (%s)',
+                            ['test<img src="{0}" />test'.format(os.path.basename(used_file_in_db))]
+        )
         self.db_connection.commit()
         used_in_file = os.path.join(self.code_dir, '{0}/{1}/used_in_file_{2}'.format(uuid4().hex, uuid4().hex, uuid4().hex))
         subprocess.call(['mkdir', '-p', os.path.dirname(used_in_file)])
@@ -60,7 +62,7 @@ class Test(unittest.TestCase):
             f.write('''
             sdkfksdkf\n
             sdkfksdkf\n
-            dskkd{0}fksdkf\n
+            dskkd<img src="{0}" />fksdkf\n
             sdiofiosdiof\n
             '''.format(os.path.basename(used_file)))
             f.close()

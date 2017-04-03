@@ -5,9 +5,13 @@ import MySQLdb
 from _mysql_exceptions import ProgrammingError
 import tarfile
 import argparse
+import re
+import cProfile, pstats
 from pytz import timezone
 from datetime import datetime
+from six import StringIO
 from six.moves import input
+from binaryornot.check import is_binary
 from uuid import uuid4
 
 
@@ -20,6 +24,7 @@ def get_answer(default='Y'):
 
 def delete_unused_files(db_name, db_host, db_username,db_password, find_unused_at_directories=[],
                         find_usages_at_directories=[], verbose=False):
+    pr = cProfile.Profile()
     for dir_path in find_usages_at_directories:
         assert (dir_path not in find_unused_at_directories), "Directories find_unused and find_usages is different"
         for dir_path2 in find_unused_at_directories:
@@ -31,7 +36,6 @@ def delete_unused_files(db_name, db_host, db_username,db_password, find_unused_a
     conn.cursor()
     cursor.execute('SHOW TABLES')
     table_info = {}
-    index_table_name = 'delete_unsed_files_script_index_{0}'.format(uuid4().hex)
     for raw in cursor.fetchall():
         table_name = raw[0]
         table_info[table_name]  = []
@@ -43,42 +47,56 @@ def delete_unused_files(db_name, db_host, db_username,db_password, find_unused_a
                 if t in column_type:
                     column_type_is_supported = True
                     break
-            if column_type_is_supported is False:
-                continue
-            table_info[table_name].append(raw[0])
-    index_is_build = False
+            if column_type_is_supported:
+                table_info[table_name].append(raw[0])
 
-    def build_index():
-        index_is_build = True
-        textchars = bytearray({7, 8, 9, 10, 12, 13, 27} | set(range(0x20, 0x100)) - {0x7f})
-        is_binary_string = lambda bytes: bool(bytes.translate(None, textchars))
-        cursor.execute('''
-                CREATE TABLE `{0}` (
-                  `{1}` varchar(1024) NOT NULL
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
-                '''.format(index_table_name, 'word'))
-        conn.commit()
-        cursor.execute('''
-          ALTER TABLE `{0}` ADD UNIQUE KEY `word` (`word`(150))
-        '''.format(table_name))
-
+    def get_unique_words():
+        pattern = re.compile('[^\w\-\.]+', re.UNICODE)
+        all_words = set([])
+        print('Making search index for files...')
         for dir_path in find_usages_at_directories:
             for root, subdirs, files in os.walk(dir_path):
                 for filename in files:
                     file_path = os.path.join(root, filename)
                     with open(file_path, 'rb') as f:
-                        if is_binary_string(f.read(1024)) is False:
+                        if is_binary(file_path):
                             continue
                         f.seek(0)
                         for line in f:
-                            for word in line.split():
-                                pass
+                            words = pattern.sub(' ', line).split()
+                            all_words = all_words | set(words)
+        print('Making search index for db...')
+        for table_name, fields in table_info.items():
+            if len(fields) == 0:
+                continue
+            print('Indexing table %s' % table_name)
+            query = '''SELECT {0} FROM  `{1}`'''.format(
+                ','.join(['`%s`' % field_name for field_name in fields]),
+                table_name,
+            )
+            cursor.execute(query)
+            while True:
+                row = cursor.fetchone()
+                if row is None:
+                    break
+                for content in row:
+                    if content is None:
+                        continue
+                    words = pattern.sub(' ', content).split()
+                    all_words = all_words | set(words)
+        return all_words
 
+    pr.enable()
+    unique_words_in_project = get_unique_words()
+    pr.disable()
+    s = StringIO()
+    sortby = 'cumulative'
+    ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+    ps.print_stats()
+    print(s.getvalue())
 
     def is_file_used(f_name):
-        if index_is_build is False:
-            build_index()
-        return True
+        return f_name in unique_words_in_project
 
     def is_file_used_at_directories(f_name):
         for dir_path in find_usages_at_directories:
@@ -108,7 +126,7 @@ def delete_unused_files(db_name, db_host, db_username,db_password, find_unused_a
     for dir_path in find_unused_at_directories:
         for root, subdirs, files in os.walk(dir_path):
             for filename in files:
-                if is_file_used_at_directories(filename) is False and is_file_used_at_db(filename) is False:
+                if is_file_used(filename) is False:
                     file_path = os.path.realpath(os.path.join(root, filename))
                     print('file: {0} marked for deletion'.format(file_path))
                     files_to_delete.append(file_path)
