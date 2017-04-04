@@ -6,6 +6,7 @@ import subprocess
 import MySQLdb
 from delete_unused_files import delete_unused_files
 from restore_deleted_unused_files import restore_deleted_unused_files
+import six
 
 
 class Test(unittest.TestCase):
@@ -23,7 +24,7 @@ class Test(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.db_connection = MySQLdb.connect(host=cls.db_host, user=cls.db_username,
-                     passwd=cls.db_password)
+                     passwd=cls.db_password, charset='utf8')
         cls.cursor = cls.db_connection.cursor(MySQLdb.cursors.DictCursor)
         cls.cursor.execute('CREATE DATABASE {0} DEFAULT CHARACTER SET utf8 DEFAULT COLLATE utf8_general_ci'.format(cls.db_name))
         cls.db_connection.commit()
@@ -31,7 +32,7 @@ class Test(unittest.TestCase):
         cls.cursor.execute('''
         CREATE TABLE `{0}` (
           `{1}` varchar(255) NOT NULL
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE utf8_general_ci;
         '''.format(cls.table_name, uuid4().hex))
         cls.db_connection.commit()
         subprocess.call(['mkdir', '-p', cls.data_dir])
@@ -65,7 +66,6 @@ class Test(unittest.TestCase):
             dskkd<img src="{0}" />fksdkf\n
             sdiofiosdiof\n
             '''.format(os.path.basename(used_file)))
-            f.close()
         file_count = int(subprocess.Popen('find {0} -type f | wc -l'.format(self.data_dir), stdout=subprocess.PIPE, shell=True).stdout.read())
         self.assertRaises(AssertionError, delete_unused_files, db_name=self.db_name, db_host=self.db_host, db_username=self.db_username,
                             db_password=self.db_password,
@@ -100,12 +100,65 @@ class Test(unittest.TestCase):
                                                         stdout=subprocess.PIPE, shell=True).stdout.read())
         self.assertEqual(file_count, file_count_after_restore, 'Check that file count before deletion equals file count after deletion')
         self.assertTrue(os.path.isfile(unused_file), 'Check that previously deleted file exists')
-        delete_unused_files(
-            db_name=self.db_name, db_host=self.db_host, db_username=self.db_username,
-            db_password=self.db_password,
-            find_unused_at_directories=[self.data_dir], find_usages_at_directories=[self.code_dir])
+
+    def test_used_file_is_not_deleted(self):
+        file_names = []
+        with open(os.path.join(os.path.dirname(__file__), 'file_names.txt'), 'rb') as f:
+            for line in f:
+                file_names.append(line.rstrip("\n"))
+        used_in_file = os.path.join(self.code_dir, 'used_in_file_{0}'.format(uuid4().hex))
+        file_names = set(file_names)
+        for file_name in file_names:
+            file_path = os.path.join(self.data_dir, file_name)
+            with open(file_path, 'w') as f:
+                f.write('some data')
+            with open(used_in_file, 'ab') as f:
+                f.write('<img src="{0}" />\n'.format(file_name))
+        file_count = int(subprocess.Popen('find {0} -type f | wc -l'.format(self.data_dir), stdout=subprocess.PIPE,
+                                          shell=True).stdout.read())
+        delete_unused_files(db_name=self.db_name, db_host=self.db_host, db_username=self.db_username,
+                            db_password=self.db_password,
+                            find_unused_at_directories=[self.data_dir], find_usages_at_directories=[self.code_dir])
+        file_count_after_deletion = int(
+            subprocess.Popen('find {0} -type f | wc -l'.format(self.data_dir), stdout=subprocess.PIPE,
+                             shell=True).stdout.read())
+        for file_name in file_names:
+            file_path = os.path.join(self.data_dir, file_name)
+            self.assertTrue(os.path.exists(file_path), 'Check file {0} is not deleted'.format(file_name))
+        self.assertEqual(file_count, file_count_after_deletion, 'Check that file count before deletion equals file count after deletion')
+
+    def test_used_file_in_db_is_not_deleted(self):
+        file_names = []
+        with open(os.path.join(os.path.dirname(__file__), 'file_names.txt'), 'rb') as f:
+            for line in f:
+                file_names.append(line.rstrip("\n"))
+        file_names = set(file_names)
+        for file_name in file_names:
+            file_path = os.path.join(self.data_dir, file_name)
+            with open(file_path, 'w') as f:
+                f.write('some data')
+            self.cursor.execute('INSERT INTO `' + self.table_name + '` VALUES (%s)',
+                                ['test<img src="{0}" />test'.format(file_name)])
+            self.db_connection.commit()
+        file_count = int(subprocess.Popen('find {0} -type f | wc -l'.format(self.data_dir), stdout=subprocess.PIPE,
+                                          shell=True).stdout.read())
+        delete_unused_files(db_name=self.db_name, db_host=self.db_host, db_username=self.db_username,
+                            db_password=self.db_password,
+                            find_unused_at_directories=[self.data_dir], find_usages_at_directories=[self.code_dir])
+        file_count_after_deletion = int(
+            subprocess.Popen('find {0} -type f | wc -l'.format(self.data_dir), stdout=subprocess.PIPE,
+                             shell=True).stdout.read())
+        for file_name in file_names:
+            file_path = os.path.join(self.data_dir, file_name)
+            self.assertTrue(os.path.exists(file_path), 'Check file {0} is not deleted'.format(file_name))
+        self.assertEqual(file_count, file_count_after_deletion,
+                         'Check that file count before deletion equals file count after deletion')
 
 
+
+    def tearDown(self):
+        subprocess.call('rm -rf {0}'.format(os.path.join(self.data_dir, '*')), shell=True)
+        subprocess.call('rm -rf {0}'.format(os.path.join(self.code_dir, '*')), shell=True)
 
     @classmethod
     def tearDownClass(cls):

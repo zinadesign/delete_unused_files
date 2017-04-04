@@ -11,6 +11,7 @@ import codecs
 from progressbar.utils import get_terminal_size
 from pytz import timezone
 from datetime import datetime
+import six
 from six.moves import input, range
 from binaryornot.check import is_binary
 
@@ -30,7 +31,7 @@ def delete_unused_files(db_name, db_host, db_username,db_password, find_unused_a
             assert (dir_path not in dir_path2), "Directories find_usages is not subdirectory of find_unused"
 
     conn = MySQLdb.connect(host=db_host, user=db_username,
-                           passwd=db_password, db=db_name)
+                           passwd=db_password, db=db_name, charset='utf8')
     cursor = conn.cursor()
     conn.cursor()
     cursor.execute('SHOW TABLES')
@@ -40,7 +41,7 @@ def delete_unused_files(db_name, db_host, db_username,db_password, find_unused_a
         if table_name in exclude_tables:
             continue
         table_info[table_name]  = []
-        cursor.execute('SHOW COLUMNS FROM {0}'.format(table_name))
+        cursor.execute('SHOW COLUMNS FROM `{0}`'.format(table_name))
         for raw in cursor.fetchall():
             column_type_is_supported = False
             column_type = raw[1].upper()
@@ -50,9 +51,8 @@ def delete_unused_files(db_name, db_host, db_username,db_password, find_unused_a
                     break
             if column_type_is_supported:
                 table_info[table_name].append(raw[0])
-
+    pattern = re.compile('[^\w\-\.\(\)=\+\!\~\#\[\]\,\%\`\&\;\:]+', re.UNICODE)
     def get_unique_words():
-        pattern = re.compile('[^\w\-\.]+', re.UNICODE)
         all_words = {}
         print('Making search index for files...')
         for dir_path in find_usages_at_directories:
@@ -64,6 +64,8 @@ def delete_unused_files(db_name, db_host, db_username,db_password, find_unused_a
                             continue
                         f.seek(0)
                         for line in f:
+                            line = line.decode('utf-8')
+                            line = line.rstrip("\n")
                             words = pattern.sub(' ', line).split()
                             for w in words:
                                 all_words[w] = None
@@ -106,13 +108,19 @@ def delete_unused_files(db_name, db_host, db_username,db_password, find_unused_a
     unique_words_in_project = get_unique_words()
 
     def is_file_used(f_name):
-        return f_name in unique_words_in_project
+        return f_name.decode('utf-8') in unique_words_in_project
 
     files_to_delete = []
 
     for dir_path in find_unused_at_directories:
         for root, subdirs, files in os.walk(dir_path):
             for filename in files:
+                if len(pattern.findall(filename.decode('utf-8'))) > 0:
+                    print('Skip {0} due filename contains not allowed characters'.format(filename))
+                    continue
+                if filename in ['.htaccess', '.gitkeep', '.gitignore']:
+                    print('Skip {0} due is special file used by external applications'.format(filename))
+                    continue
                 if is_file_used(filename) is False:
                     file_path = os.path.realpath(os.path.join(root, filename))
                     files_to_delete.append(file_path)
